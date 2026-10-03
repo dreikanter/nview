@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -38,6 +40,65 @@ func setupTestServer(t *testing.T) (*Server, string) {
 		t.Fatalf("NewServer: %v", err)
 	}
 	return srv, dir
+}
+
+func TestServerStartsWithInvalidFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	monthDir := filepath.Join(dir, "2026", "07")
+	if err := os.MkdirAll(monthDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	paths := []string{
+		filepath.Join(monthDir, "20260717_10433_unicredit.md"),
+		filepath.Join(monthDir, "20260718_10434_broken.md"),
+	}
+	contents := []string{
+		"---\ntitle: UniCredit\ntags: unicredit\n---\n# UniCredit\n",
+		"---\ntitle: [unterminated\n---\n# Broken\n",
+	}
+	for i, path := range paths {
+		if err := os.WriteFile(path, []byte(contents[i]), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	validPath := filepath.Join(monthDir, "20260719_10435_healthy.md")
+	if err := os.WriteFile(validPath, []byte("---\ntitle: Healthy\ntags: [healthy]\n---\n# Healthy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	srv, err := NewServer(dir, "", logger)
+	if err != nil {
+		t.Fatalf("NewServer with invalid frontmatter: %v", err)
+	}
+
+	for _, id := range []string{"10433", "10434"} {
+		req := httptest.NewRequest("GET", "/n/"+id, nil)
+		w := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("GET /n/%s status = %d, want 200; body: %s", id, w.Code, w.Body.String())
+		}
+	}
+
+	req := httptest.NewRequest("GET", "/n/healthy", nil)
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), ">healthy<") {
+		t.Errorf("valid note metadata was not preserved: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	output := logs.String()
+	if got := strings.Count(output, "invalid frontmatter; using filename metadata"); got != len(paths) {
+		t.Fatalf("frontmatter warning count = %d, want %d; logs:\n%s", got, len(paths), output)
+	}
+	for _, path := range paths {
+		if got := strings.Count(output, path); got != 1 {
+			t.Errorf("warning path count for %q = %d, want 1; logs:\n%s", path, got, output)
+		}
+	}
 }
 
 func TestNoteHandlerBySlug(t *testing.T) {

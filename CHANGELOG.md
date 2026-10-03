@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep serving when individual notes have invalid YAML frontmatter; log one warning per affected file and index it using filename-derived metadata.
+
 ### Changed
 
 - Adopt an Unreleased-first changelog and release-PR versioning workflow so multiple PRs can be bundled into one release ([#117]).
